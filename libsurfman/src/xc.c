@@ -37,49 +37,34 @@ void xc_init (void)
     }
 }
 
-int xc_domid_exists (int domid)
-{
-  xc_dominfo_t info;
-  int rc;
-
-  rc = xc_domain_getinfo (xch, domid, 1, &info);
-  return rc >= 0 ? info.domid == (domid_t)domid : 0;
-}
-
 int xc_domid_getinfo(int domid, xc_dominfo_t *info)
 {
-  return xc_domain_getinfo (xch, domid, 1, info);
+  int rc;
+
+  rc = xc_domain_getinfo (xch, domid, 1, info);
+  if (rc == 1)
+    return info->domid == (domid_t)domid ? 1 : -ENOENT;
+  return rc;
+}
+
+int xc_domid_exists(int domid)
+{
+  xc_dominfo_t info = { 0 };
+
+  return !!xc_domid_getinfo(domid, &info);
 }
 
 void *xc_mmap_foreign(void *addr, size_t length, int prot,
                       int domid, xen_pfn_t *pages)
 {
-  void *ret;
-  int rc;
-  privcmd_mmapbatch_t ioctlx;
-  size_t i;
+  (void) addr; /* This is munmaped in update_mappings. */
 
-  ret = mmap (addr, length, prot, MAP_SHARED, privcmd_fd, 0);
-  if (ret == MAP_FAILED)
-    return ret;
+  assert(xch != NULL);
+  assert(length > 0);
+  assert(pages != NULL); /* It's actually an array of pfns... */
 
-  ioctlx.num = (length + XC_PAGE_SIZE - 1) / XC_PAGE_SIZE;
-  ioctlx.dom = domid;
-  ioctlx.addr = (unsigned long)ret;
-  ioctlx.arr = pages;
-
-  rc = ioctl(privcmd_fd, IOCTL_PRIVCMD_MMAPBATCH, &ioctlx);
-
-  for (i = 0; i < length; i += XC_PAGE_SIZE)
-    pages[i >> XC_PAGE_SHIFT] &= ~XEN_DOMCTL_PFINFO_LTAB_MASK;
-
-  if (rc < 0)
-    {
-      munmap(ret, length);
-      ret = MAP_FAILED;
-    }
-
-  return ret;
+  return xc_map_foreign_pages (xch, domid, prot, pages,
+                              (length + XC_PAGE_SIZE - 1 >> XC_PAGE_SHIFT));
 }
 
 int xc_translate_gpfn_to_mfn (int domid, size_t pfn_count,
@@ -110,4 +95,9 @@ int xc_hvm_get_dirty_vram(int domid, uint64_t base_pfn, size_t n,
                           unsigned long *db)
 {
   return xc_hvm_track_dirty_vram (xch, domid, base_pfn, n, db);
+}
+
+int xc_hvm_pin_memory_cacheattr(int domid, uint64_t pfn_start, uint64_t pfn_end, uint32_t type)
+{
+  return xc_domain_pin_memory_cacheattr(xch, domid, pfn_start, pfn_end, type);
 }
